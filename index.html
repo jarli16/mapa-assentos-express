@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mapa de Assentos</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --verde:    #16a34a;
+  --verde-h:  #15803d;
+  --amarelo:  #d97706;
+  --vermelho: #dc2626;
+  --bg:       #f0f4f8;
+  --card:     #ffffff;
+  --cor-cor:  #dde3ea;
+  --txt:      #111827;
+  --sub:      #6b7280;
+  --azul:     #2563eb;
+  --azul-h:   #1d4ed8;
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--txt);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* padding-bottom reserva espaço pro botão fixo */
+  padding: 10px 10px 80px;
+  min-height: 100dvh;
+}
+
+/* ── CABEÇALHO ── */
+.cabecalho {
+  text-align: center;
+  margin-bottom: 10px;
+  width: 100%;
+}
+.cabecalho h1 {
+  font-size: clamp(.95rem, 4.5vw, 1.25rem);
+  font-weight: 700;
+}
+.cabecalho p {
+  font-size: clamp(.62rem, 2.6vw, .78rem);
+  color: var(--sub);
+  margin-top: 2px;
+}
+
+/* ── CARD ── */
+.card-wrap { position: relative; width: 100%; max-width: 440px; }
+.card {
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: 0 3px 16px rgba(0,0,0,.09);
+  padding: 12px 10px 10px;
+}
+
+/* ── STATUS ── */
+#status-bar {
+  font-size: clamp(.62rem, 2.5vw, .76rem);
+  color: var(--sub);
+  text-align: center;
+  margin-bottom: 10px;
+  min-height: 14px;
+}
+#status-bar.ok   { color: var(--verde); }
+#status-bar.erro { color: var(--vermelho); }
+
+/* ── MAPA ──
+   O truque: usamos CSS custom properties calculadas em JS
+   para que o assento se dimensione automaticamente ao espaço disponível.
+   Fallback seguro: 48px.
+*/
+.mapa {
+  display: grid;
+  grid-template-columns: 1fr 1fr var(--cor-w, 30px) 1fr 1fr;
+  grid-template-rows: repeat(8, var(--seat-h, 48px));
+  gap: var(--gap, 6px);
+  width: 100%;
+}
+
+/* ── CORREDOR ── */
+.corredor {
+  grid-column: 3;
+  grid-row: 1 / 8;
+  background: var(--cor-cor);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.corredor span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: clamp(.45rem, 1.4vw, .58rem);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--sub);
+}
+
+/* ── ENTRADA ── */
+.entrada {
+  grid-column: 4 / 6;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vermelho);
+  font-weight: 700;
+  font-size: clamp(.78rem, 3.4vw, 1rem);
+}
+
+/* ── ASSENTOS ── */
+.assento {
+  border-radius: 8px;
+  border: none;
+  font-size: clamp(.7rem, 3vw, .92rem);
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  outline: none;
+  user-select: none;
+  transition: filter .1s, transform .1s;
+}
+.assento:active { transform: scale(.89); filter: brightness(.85); }
+
+.assento.livre       { background: var(--verde); }
+.assento.selecionado { background: var(--amarelo); }
+.assento.ocupado     { background: var(--vermelho); cursor: not-allowed; opacity: .75; }
+
+/* assento 31 — col 3, linha 8 */
+.assento31 {
+  grid-column: 3;
+  grid-row: 8;
+  border: 2.5px dashed rgba(55,65,81,.65) !important;
+  font-size: clamp(.56rem, 2.2vw, .72rem);
+}
+
+.ph { visibility: hidden; pointer-events: none; }
+
+/* ── LEGENDA ── */
+.legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  justify-content: center;
+  margin-top: 10px;
+  font-size: clamp(.6rem, 2.4vw, .72rem);
+  color: var(--sub);
+}
+.legenda-item { display: flex; align-items: center; gap: 4px; }
+.dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.dot.livre       { background: var(--verde); }
+.dot.ocupado     { background: var(--vermelho); }
+.dot.selecionado { background: var(--amarelo); }
+.dot.especial    { background: #fff; border: 2px dashed #374151; }
+
+/* ── BOTÃO FIXO ── */
+.btn-wrap {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--card);
+  border-top: 1px solid #e5e7eb;
+  padding: 9px 14px calc(9px + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+}
+.btn-confirmar {
+  width: 100%;
+  max-width: 440px;
+  padding: 14px;
+  background: var(--azul);
+  color: #fff;
+  font-size: clamp(.88rem, 3.8vw, 1rem);
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background .15s, transform .1s;
+}
+.btn-confirmar:active { transform: scale(.97); background: var(--azul-h); }
+
+/* ── MODAL (bottom sheet) ── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(15,23,42,.50);
+  z-index: 100;
+  align-items: flex-end;
+  justify-content: center;
+}
+.modal-overlay.aberto { display: flex; }
+
+.modal {
+  background: #fff;
+  border-radius: 20px 20px 0 0;
+  padding: 26px 20px calc(28px + env(safe-area-inset-bottom));
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+  box-shadow: 0 -4px 28px rgba(0,0,0,.14);
+  animation: slideUp .22s ease;
+}
+@keyframes slideUp {
+  from { transform: translateY(50px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.modal-icon { font-size: 2.4rem; margin-bottom: 8px; }
+.modal h2   { font-size: 1.05rem; font-weight: 700; margin-bottom: 6px; }
+.modal p    { font-size: .9rem; color: var(--sub); line-height: 1.6; }
+.modal strong { color: var(--txt); }
+
+.modal-btns { display: flex; gap: 10px; margin-top: 20px; }
+.modal-btns button {
+  flex: 1; padding: 13px; border-radius: 10px; border: none;
+  font-size: .93rem; font-weight: 600; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-fechar { background: #f1f5f9; color: var(--txt); }
+.btn-ok     { background: var(--azul); color: #fff; }
+
+/* ── LOADING ── */
+.loading-overlay {
+  display: none; position: absolute; inset: 0;
+  background: rgba(255,255,255,.80); border-radius: 16px;
+  z-index: 10; align-items: center; justify-content: center;
+  flex-direction: column; gap: 8px;
+}
+.loading-overlay.ativo { display: flex; }
+.spinner {
+  width: 26px; height: 26px;
+  border: 3px solid #e2e8f0; border-top-color: var(--azul);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-txt { font-size: .72rem; color: var(--sub); }
+</style>
+</head>
+<body>
+
+<div class="cabecalho">
+  <h1>Mapa de Assentos</h1>
+  <p>Toque para selecionar &middot; Verde=livre &middot; Vermelho=ocupado</p>
+</div>
+
+<div class="card-wrap">
+  <div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <span class="loading-txt">Carregando&hellip;</span>
+  </div>
+  <div class="card">
+    <div id="status-bar">Buscando dados&hellip;</div>
+    <div class="mapa" id="mapa"></div>
+    <div class="legenda">
+      <div class="legenda-item"><div class="dot livre"></div>Livre</div>
+      <div class="legenda-item"><div class="dot ocupado"></div>Ocupado</div>
+      <div class="legenda-item"><div class="dot selecionado"></div>Selecionado</div>
+      <div class="legenda-item"><div class="dot especial"></div>Especial (31)</div>
+    </div>
+  </div>
+</div>
+
+<div class="btn-wrap">
+  <button class="btn-confirmar" onclick="confirmarAssentos()">Confirmar Assentos</button>
+</div>
+
+<div class="modal-overlay" id="modal" onclick="fecharModalFora(event)">
+  <div class="modal">
+    <div class="modal-icon" id="modal-icon">&#x2705;</div>
+    <h2 id="modal-titulo"></h2>
+    <p  id="modal-corpo"></p>
+    <div class="modal-btns">
+      <button class="btn-fechar" onclick="fecharModal()">Voltar</button>
+      <button class="btn-ok"     onclick="fecharModal()">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG
+   ============================================================ */
+var SHEET_ID    = "1gNY1bFoZ59954Flbuo2wpOaC-BgGRn_YbssKwVkVaN8";
+var ABA_PADRAO  = "Cametá - Belém";
+var DATA_VIAGEM = "09/04/2026";
+
+var LAYOUT = [
+  [  1,   2,  "COR", "ENT",  null ],
+  [  3,   4,   null,   5,     6   ],
+  [  7,   8,   null,   9,    10   ],
+  [ 11,  12,   null,  13,    14   ],
+  [ 15,  16,   null,  17,    18   ],
+  [ 19,  20,   null,  21,    22   ],
+  [ 23,  24,   null,  25,    26   ],
+  [ 27,  28,    31,   29,    30   ],
+];
+
+var STATUS = {};
+
+/* ============================================================
+   CÁLCULO AUTOMÁTICO DO TAMANHO DOS ASSENTOS
+   Garante que o mapa inteiro caiba na área visível sem scroll.
+   ============================================================ */
+function calcularDimensoes() {
+  // Área disponível: viewport - cabeçalho (~62px) - padding (~20px)
+  // - status-bar (~24px) - legenda (~30px) - botão fixo (~70px)
+  var alturaDisponivel = window.innerHeight - 62 - 20 - 24 - 30 - 70 - 24; // margens card
+  var larguraDisponivel = Math.min(window.innerWidth - 20, 440) - 20; // padding card
+
+  var nLinhas  = 8;
+  var nCols    = 4;  // colunas de assento (excl. corredor)
+
+  // Gap ótimo
+  var gap = Math.max(4, Math.min(8, Math.floor(larguraDisponivel * 0.022)));
+
+  // Largura do corredor: 7% da largura disponível, mín 24px, máx 34px
+  var corW = Math.max(24, Math.min(34, Math.floor(larguraDisponivel * 0.07)));
+
+  // Espaço restante para assentos
+  var espacoH = larguraDisponivel - corW - gap * 4; // 4 gaps entre 5 colunas
+  var seatW   = Math.floor(espacoH / nCols);
+
+  // Altura do assento pelo espaço vertical
+  var espacoV = alturaDisponivel - gap * (nLinhas - 1);
+  var seatH   = Math.floor(espacoV / nLinhas);
+
+  // Usa o menor para manter quadrado, com mínimo absoluto de 38px
+  var seat = Math.max(38, Math.min(seatW, seatH));
+  gap      = Math.max(4, gap);
+
+  // Aplica via CSS custom properties na .mapa
+  var mapa = document.getElementById("mapa");
+  if (mapa) {
+    mapa.style.setProperty("--seat-h", seat + "px");
+    mapa.style.setProperty("--cor-w",  corW  + "px");
+    mapa.style.setProperty("--gap",    gap   + "px");
+    mapa.style.gridTemplateRows    = "repeat(8, " + seat + "px)";
+    mapa.style.gridTemplateColumns = "1fr 1fr " + corW + "px 1fr 1fr";
+    mapa.style.gap = gap + "px";
+  }
+}
+
+/* ============================================================
+   GOOGLE SHEETS
+   ============================================================ */
+async function carregarPlanilha(aba) {
+  var url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID
+          + "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(aba);
+  var resp = await fetch(url);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  return parsearCSV(await resp.text());
+}
+
+function parsearCSV(texto) {
+  var linhas = texto.trim().split("\n");
+  if (linhas.length < 2) return [];
+  var cab = linhas[0].split(",").map(function(c){ return c.replace(/"/g,"").trim().toLowerCase(); });
+  return linhas.slice(1).map(function(linha) {
+    var vals = splitLinha(linha), obj = {};
+    cab.forEach(function(k,i){ obj[k] = (vals[i]||"").replace(/"/g,"").trim(); });
+    return obj;
+  });
+}
+
+function splitLinha(linha) {
+  var res=[], cur="", dentro=false, c;
+  for (var i=0; i<linha.length; i++) {
+    c=linha[i];
+    if (c==='"') dentro=!dentro;
+    else if (c===',' && !dentro) { res.push(cur); cur=""; }
+    else cur+=c;
+  }
+  res.push(cur); return res;
+}
+
+function detectarColunas(linhas) {
+  if (!linhas.length) return {};
+  var mapa={};
+  Object.keys(linhas[0]).forEach(function(k){
+    var kl=k.toLowerCase();
+    if (!mapa.assento  && (kl.indexOf("assento")>=0||kl.indexOf("seat")>=0))   mapa.assento=k;
+    if (!mapa.situacao && (kl.indexOf("situa")>=0  ||kl.indexOf("status")>=0)) mapa.situacao=k;
+    if (!mapa.data     && kl.indexOf("data")>=0)                                mapa.data=k;
+  });
+  return mapa;
+}
+
+function processarDados(linhas, dataFiltro) {
+  var cols=detectarColunas(linhas), st={};
+  for (var i=1;i<=31;i++) st[i]="livre";
+  if (!cols.assento||!cols.situacao) { console.warn("Colunas não detectadas"); return st; }
+  linhas.forEach(function(row){
+    if (cols.data&&dataFiltro) {
+      var dp=(row[cols.data]||"").trim();
+      if (dp&&dp!==dataFiltro) return;
+    }
+    var num=parseInt(row[cols.assento],10);
+    if (!num||isNaN(num)||num<1||num>31) return;
+    var sit=(row[cols.situacao]||"").toUpperCase().trim();
+    if      (sit.indexOf("OCUP")>=0)   st[num]="ocupado";
+    else if (sit.indexOf("RESERV")>=0) st[num]="selecionado";
+  });
+  return st;
+}
+
+/* ============================================================
+   RENDERIZAR
+   ============================================================ */
+function renderizarMapa() {
+  var el=document.getElementById("mapa");
+  el.innerHTML="";
+  var corredorOk=false;
+
+  LAYOUT.forEach(function(row,ri){
+    var linha=ri+1;
+    row.forEach(function(item,ci){
+
+      if (item==="COR"&&!corredorOk) {
+        var d=document.createElement("div");
+        d.className="corredor";
+        d.style.cssText="grid-column:3;grid-row:1/8;";
+        var s=document.createElement("span"); s.textContent="corredor";
+        d.appendChild(s); el.appendChild(d);
+        corredorOk=true; return;
+      }
+
+      if (item==="ENT") {
+        var d=document.createElement("div");
+        d.className="entrada";
+        d.textContent="ENTRADA";
+        d.style.cssText="grid-column:4/6;grid-row:1;";
+        el.appendChild(d); return;
+      }
+
+      if (item===null) {
+        if (ci===2) return;
+        if (ci===4&&linha===1) return;
+        var ph=document.createElement("div");
+        ph.className="ph"; el.appendChild(ph); return;
+      }
+
+      var btn=document.createElement("button");
+      var st=STATUS[item]||"livre";
+      btn.className="assento "+st+(item===31?" assento31":"");
+      btn.textContent=item<10?"0"+item:""+item;
+      btn.dataset.num=item;
+      if (item===31) btn.style.cssText="grid-column:3;grid-row:8;";
+      if (st==="ocupado") {
+        btn.disabled=true;
+      } else {
+        btn.addEventListener("click",(function(n){ return function(){ toggleAssento(n); }; })(item));
+      }
+      el.appendChild(btn);
+    });
+  });
+}
+
+/* ============================================================
+   TOGGLE
+   ============================================================ */
+function toggleAssento(num) {
+  if (STATUS[num]==="ocupado") return;
+  STATUS[num]=STATUS[num]==="livre"?"selecionado":"livre";
+  var btn=document.querySelector(".assento[data-num='"+num+"']");
+  if (btn){ btn.classList.remove("livre","selecionado","ocupado"); btn.classList.add(STATUS[num]); }
+  atualizarContador();
+}
+
+function atualizarContador() {
+  var n=Object.values(STATUS).filter(function(s){ return s==="selecionado"; }).length;
+  var bar=document.getElementById("status-bar");
+  bar.className="";
+  bar.textContent=n===0
+    ?"Nenhum assento selecionado"
+    :n+" assento"+(n>1?"s":"")+" selecionado"+(n>1?"s":"");
+}
+
+/* ============================================================
+   CONFIRMAR / MODAL
+   ============================================================ */
+function confirmarAssentos() {
+  var sel=[];
+  Object.keys(STATUS).forEach(function(k){ if(STATUS[k]==="selecionado") sel.push(parseInt(k)); });
+  sel.sort(function(a,b){ return a-b; });
+  var icon=document.getElementById("modal-icon");
+  var titulo=document.getElementById("modal-titulo");
+  var corpo=document.getElementById("modal-corpo");
+  if (!sel.length) {
+    icon.textContent="⚠️"; titulo.textContent="Nenhum assento selecionado";
+    corpo.innerHTML="Selecione ao menos um assento antes de confirmar.";
+  } else {
+    var lista=sel.map(function(n){ return n<10?"0"+n:""+n; }).join(", ");
+    icon.textContent="✅"; titulo.textContent="Assentos confirmados!";
+    corpo.innerHTML="<strong>Assentos selecionados:</strong><br>"+lista;
+  }
+  abrirModal();
+}
+
+function abrirModal()  { document.getElementById("modal").classList.add("aberto"); }
+function fecharModal() { document.getElementById("modal").classList.remove("aberto"); }
+function fecharModalFora(e) { if(e.target.id==="modal") fecharModal(); }
+
+/* ============================================================
+   LOADING
+   ============================================================ */
+function setLoading(v) { document.getElementById("loading").classList.toggle("ativo",v); }
+
+/* ============================================================
+   INIT
+   ============================================================ */
+async function inicializar() {
+  setLoading(true);
+  var bar=document.getElementById("status-bar");
+
+  // Calcula dimensões ANTES de renderizar
+  calcularDimensoes();
+
+  try {
+    var linhas=await carregarPlanilha(ABA_PADRAO);
+    STATUS=processarDados(linhas,DATA_VIAGEM);
+    var ocup=Object.values(STATUS).filter(function(s){ return s==="ocupado"; }).length;
+    bar.className="ok";
+    bar.textContent="Dados carregados · "+ocup+" assento"+(ocup!==1?"s":"")+" ocupado"+(ocup!==1?"s":"");
+  } catch(err) {
+    console.error(err);
+    for(var i=1;i<=31;i++) STATUS[i]="livre";
+    bar.className="erro";
+    bar.textContent="Planilha indisponível — exibindo todos como livres.";
+  }
+
+  renderizarMapa();
+  atualizarContador();
+  setLoading(false);
+}
+
+// Recalcula ao girar o celular
+window.addEventListener("resize", function(){
+  calcularDimensoes();
+});
+
+document.addEventListener("DOMContentLoaded", inicializar);
+</script>
+</body>
+</html>
