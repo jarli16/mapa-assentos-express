@@ -302,9 +302,14 @@ body {
 /* ============================================================
    CONFIG
    ============================================================ */
+const params = new URLSearchParams(window.location.search);
+  
 var SHEET_ID    = "1gNY1bFoZ59954Flbuo2wpOaC-BgGRn_YbssKwVkVaN8";
-var ABA_PADRAO  = "Cametá - Belém";
-var DATA_VIAGEM = "09/04/2026";
+var ABA_PADRAO  = params.get("aba") || "Cametá - Belém";
+var DATA_VIAGEM = params.get("data") || "";
+var TOKEN       = params.get("token") || "";
+var CALLBACK_URL = params.get("callback") || "";
+var MAX_ASSENTOS = parseInt(params.get("max") || "4", 10);
 
 var LAYOUT = [
   [  1,   2,  "COR", "ENT",  null ],
@@ -481,10 +486,23 @@ function renderizarMapa() {
    TOGGLE
    ============================================================ */
 function toggleAssento(num) {
-  if (STATUS[num]==="ocupado") return;
-  STATUS[num]=STATUS[num]==="livre"?"selecionado":"livre";
-  var btn=document.querySelector(".assento[data-num='"+num+"']");
-  if (btn){ btn.classList.remove("livre","selecionado","ocupado"); btn.classList.add(STATUS[num]); }
+  if (STATUS[num] === "ocupado") return;
+
+  const selecionados = Object.keys(STATUS).filter(k => STATUS[k] === "selecionado");
+
+  if (STATUS[num] === "livre" && selecionados.length >= MAX_ASSENTOS) {
+    alert(`Você pode selecionar no máximo ${MAX_ASSENTOS} assento(s).`);
+    return;
+  }
+
+  STATUS[num] = STATUS[num] === "livre" ? "selecionado" : "livre";
+
+  var btn = document.querySelector(".assento[data-num='"+num+"']");
+  if (btn) {
+    btn.classList.remove("livre", "selecionado", "ocupado");
+    btn.classList.add(STATUS[num]);
+  }
+
   atualizarContador();
 }
 
@@ -500,27 +518,91 @@ function atualizarContador() {
 /* ============================================================
    CONFIRMAR / MODAL
    ============================================================ */
-function confirmarAssentos() {
-  var sel=[];
-  Object.keys(STATUS).forEach(function(k){ if(STATUS[k]==="selecionado") sel.push(parseInt(k)); });
-  sel.sort(function(a,b){ return a-b; });
-  var icon=document.getElementById("modal-icon");
-  var titulo=document.getElementById("modal-titulo");
-  var corpo=document.getElementById("modal-corpo");
+async function confirmarAssentos() {
+  var sel = [];
+  Object.keys(STATUS).forEach(function(k) {
+    if (STATUS[k] === "selecionado") sel.push(parseInt(k));
+  });
+
+  sel.sort(function(a, b) { return a - b; });
+
+  var icon = document.getElementById("modal-icon");
+  var titulo = document.getElementById("modal-titulo");
+  var corpo = document.getElementById("modal-corpo");
+
   if (!sel.length) {
-    icon.textContent="⚠️"; titulo.textContent="Nenhum assento selecionado";
-    corpo.innerHTML="Selecione ao menos um assento antes de confirmar.";
-  } else {
-    var lista=sel.map(function(n){ return n<10?"0"+n:""+n; }).join(", ");
-    icon.textContent="✅"; titulo.textContent="Assentos confirmados!";
-    corpo.innerHTML="<strong>Assentos selecionados:</strong><br>"+lista;
+    icon.textContent = "⚠️";
+    titulo.textContent = "Nenhum assento selecionado";
+    corpo.innerHTML = "Selecione ao menos um assento antes de confirmar.";
+    abrirModal();
+    return;
   }
-  abrirModal();
+
+  if (!TOKEN || !CALLBACK_URL) {
+    icon.textContent = "❌";
+    titulo.textContent = "Link inválido";
+    corpo.innerHTML = "Esse link não contém as informações necessárias. Abra novamente pelo WhatsApp.";
+    abrirModal();
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const resp = await fetch(CALLBACK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        token: TOKEN,
+        assentos: sel
+      })
+    });
+
+    const data = await resp.json();
+
+    setLoading(false);
+
+    if (!resp.ok || !data.ok) {
+      icon.textContent = "❌";
+      titulo.textContent = "Não foi possível confirmar";
+      corpo.innerHTML = data.message || "Ocorreu um erro ao enviar os assentos.";
+      abrirModal();
+      return;
+    }
+
+    var lista = sel.map(function(n) {
+      return n < 10 ? "0" + n : "" + n;
+    }).join(", ");
+
+    icon.textContent = "✅";
+    titulo.textContent = "Assentos confirmados!";
+    corpo.innerHTML = "<strong>Assentos selecionados:</strong><br>" + lista + "<br><br>" + (data.message || "Sua seleção foi enviada com sucesso.");
+    abrirModal();
+
+  } catch (err) {
+    console.error(err);
+    setLoading(false);
+
+    icon.textContent = "❌";
+    titulo.textContent = "Erro de conexão";
+    corpo.innerHTML = "Não foi possível enviar sua seleção. Tente novamente.";
+    abrirModal();
+  }
 }
 
-function abrirModal()  { document.getElementById("modal").classList.add("aberto"); }
-function fecharModal() { document.getElementById("modal").classList.remove("aberto"); }
-function fecharModalFora(e) { if(e.target.id==="modal") fecharModal(); }
+function abrirModal() {
+  document.getElementById("modal").classList.add("aberto");
+}
+
+function fecharModal() {
+  document.getElementById("modal").classList.remove("aberto");
+}
+
+function fecharModalFora(e) {
+  if (e.target.id === "modal") fecharModal();
+}
 
 /* ============================================================
    LOADING
