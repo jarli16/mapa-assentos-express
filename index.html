@@ -34,7 +34,6 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* padding-bottom reserva espaço pro botão fixo */
   padding: 10px 10px 80px;
   min-height: 100dvh;
 }
@@ -75,11 +74,7 @@ body {
 #status-bar.ok   { color: var(--verde); }
 #status-bar.erro { color: var(--vermelho); }
 
-/* ── MAPA ──
-   O truque: usamos CSS custom properties calculadas em JS
-   para que o assento se dimensione automaticamente ao espaço disponível.
-   Fallback seguro: 48px.
-*/
+/* ── MAPA ── */
 .mapa {
   display: grid;
   grid-template-columns: 1fr 1fr var(--cor-w, 30px) 1fr 1fr;
@@ -304,10 +299,10 @@ body {
    ============================================================ */
 const params = new URLSearchParams(window.location.search);
   
-var SHEET_ID    = "1gNY1bFoZ59954Flbuo2wpOaC-BgGRn_YbssKwVkVaN8";
-var ABA_PADRAO  = params.get("aba") || "Cametá - Belém";
-var DATA_VIAGEM = params.get("data") || "";
-var TOKEN       = params.get("token") || "";
+var SHEET_ID     = "1gNY1bFoZ59954Flbuo2wpOaC-BgGRn_YbssKwVkVaN8";
+var ABA_PADRAO   = params.get("aba")      || "Cametá - Belém";
+var DATA_VIAGEM  = params.get("data")     || "";
+var TOKEN        = params.get("token")    || "";
 var CALLBACK_URL = params.get("callback") || "";
 var MAX_ASSENTOS = parseInt(params.get("max") || "31", 10);
 
@@ -326,36 +321,26 @@ var STATUS = {};
 
 /* ============================================================
    CÁLCULO AUTOMÁTICO DO TAMANHO DOS ASSENTOS
-   Garante que o mapa inteiro caiba na área visível sem scroll.
    ============================================================ */
 function calcularDimensoes() {
-  // Área disponível: viewport - cabeçalho (~62px) - padding (~20px)
-  // - status-bar (~24px) - legenda (~30px) - botão fixo (~70px)
-  var alturaDisponivel = window.innerHeight - 62 - 20 - 24 - 30 - 70 - 24; // margens card
-  var larguraDisponivel = Math.min(window.innerWidth - 20, 440) - 20; // padding card
+  var alturaDisponivel = window.innerHeight - 62 - 20 - 24 - 30 - 70 - 24;
+  var larguraDisponivel = Math.min(window.innerWidth - 20, 440) - 20;
 
-  var nLinhas  = 8;
-  var nCols    = 4;  // colunas de assento (excl. corredor)
+  var nLinhas = 8;
+  var nCols   = 4;
 
-  // Gap ótimo
-  var gap = Math.max(4, Math.min(8, Math.floor(larguraDisponivel * 0.022)));
-
-  // Largura do corredor: 7% da largura disponível, mín 24px, máx 34px
+  var gap  = Math.max(4, Math.min(8, Math.floor(larguraDisponivel * 0.022)));
   var corW = Math.max(24, Math.min(34, Math.floor(larguraDisponivel * 0.07)));
 
-  // Espaço restante para assentos
-  var espacoH = larguraDisponivel - corW - gap * 4; // 4 gaps entre 5 colunas
+  var espacoH = larguraDisponivel - corW - gap * 4;
   var seatW   = Math.floor(espacoH / nCols);
 
-  // Altura do assento pelo espaço vertical
   var espacoV = alturaDisponivel - gap * (nLinhas - 1);
   var seatH   = Math.floor(espacoV / nLinhas);
 
-  // Usa o menor para manter quadrado, com mínimo absoluto de 38px
   var seat = Math.max(38, Math.min(seatW, seatH));
   gap      = Math.max(4, gap);
 
-  // Aplica via CSS custom properties na .mapa
   var mapa = document.getElementById("mapa");
   if (mapa) {
     mapa.style.setProperty("--seat-h", seat + "px");
@@ -369,10 +354,13 @@ function calcularDimensoes() {
 
 /* ============================================================
    GOOGLE SHEETS
+   FIX: adiciona &range=A3:F999 para começar do cabeçalho real
+        que está na linha 3 da planilha (linhas 1-2 são título/data)
    ============================================================ */
 async function carregarPlanilha(aba) {
   var url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID
-          + "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(aba);
+          + "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(aba)
+          + "&range=A3:F999";   // ← CORREÇÃO: lê a partir do cabeçalho real
   var resp = await fetch(url);
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   return parsearCSV(await resp.text());
@@ -412,20 +400,36 @@ function detectarColunas(linhas) {
   return mapa;
 }
 
+/* ============================================================
+   PROCESSAR DADOS
+   FIX: RESERVADO agora mapeia para "ocupado" (vermelho/bloqueado)
+        assim como OCUPADO. O estado "selecionado" (laranja) é
+        exclusivo da interação do usuário no mapa.
+
+   Estados:
+     "livre"      → verde   → usuário pode clicar
+     "selecionado"→ laranja → usuário acabou de clicar (toggle)
+     "ocupado"    → vermelho→ bloqueado (OCUPADO ou RESERVADO na planilha)
+   ============================================================ */
 function processarDados(linhas, dataFiltro) {
-  var cols=detectarColunas(linhas), st={};
-  for (var i=1;i<=31;i++) st[i]="livre";
-  if (!cols.assento||!cols.situacao) { console.warn("Colunas não detectadas"); return st; }
-  linhas.forEach(function(row){
-    if (cols.data&&dataFiltro) {
-      var dp=(row[cols.data]||"").trim();
-      if (dp&&dp!==dataFiltro) return;
+  var cols = detectarColunas(linhas), st = {};
+  for (var i = 1; i <= 31; i++) st[i] = "livre";
+  if (!cols.assento || !cols.situacao) { console.warn("Colunas não detectadas", cols); return st; }
+  linhas.forEach(function(row) {
+    if (cols.data && dataFiltro) {
+      var dp = (row[cols.data] || "").trim();
+      if (dp && dp !== dataFiltro) return;
     }
-    var num=parseInt(row[cols.assento],10);
-    if (!num||isNaN(num)||num<1||num>31) return;
-    var sit=(row[cols.situacao]||"").toUpperCase().trim();
-    if      (sit.indexOf("OCUP")>=0)   st[num]="ocupado";
-    else if (sit.indexOf("RESERV")>=0) st[num]="selecionado";
+    var num = parseInt(row[cols.assento], 10);
+    if (!num || isNaN(num) || num < 1 || num > 31) return;
+    var sit = (row[cols.situacao] || "").toUpperCase().trim();
+
+    if (sit.indexOf("OCUP") >= 0) {
+      st[num] = "ocupado";      // OCUPADO → vermelho, bloqueado
+    } else if (sit.indexOf("RESERV") >= 0) {
+      st[num] = "ocupado";      // ← CORREÇÃO: RESERVADO também bloqueia
+    }
+    // LIVRE ou vazio → permanece "livre"
   });
   return st;
 }
@@ -434,48 +438,49 @@ function processarDados(linhas, dataFiltro) {
    RENDERIZAR
    ============================================================ */
 function renderizarMapa() {
-  var el=document.getElementById("mapa");
-  el.innerHTML="";
-  var corredorOk=false;
+  var el = document.getElementById("mapa");
+  el.innerHTML = "";
+  var corredorOk = false;
 
-  LAYOUT.forEach(function(row,ri){
-    var linha=ri+1;
-    row.forEach(function(item,ci){
+  LAYOUT.forEach(function(row, ri) {
+    var linha = ri + 1;
+    row.forEach(function(item, ci) {
 
-      if (item==="COR"&&!corredorOk) {
-        var d=document.createElement("div");
-        d.className="corredor";
-        d.style.cssText="grid-column:3;grid-row:1/8;";
-        var s=document.createElement("span"); s.textContent="corredor";
+      if (item === "COR" && !corredorOk) {
+        var d = document.createElement("div");
+        d.className = "corredor";
+        d.style.cssText = "grid-column:3;grid-row:1/8;";
+        var s = document.createElement("span"); s.textContent = "corredor";
         d.appendChild(s); el.appendChild(d);
-        corredorOk=true; return;
+        corredorOk = true; return;
       }
 
-      if (item==="ENT") {
-        var d=document.createElement("div");
-        d.className="entrada";
-        d.textContent="ENTRADA";
-        d.style.cssText="grid-column:4/6;grid-row:1;";
+      if (item === "ENT") {
+        var d = document.createElement("div");
+        d.className = "entrada";
+        d.textContent = "ENTRADA";
+        d.style.cssText = "grid-column:4/6;grid-row:1;";
         el.appendChild(d); return;
       }
 
-      if (item===null) {
-        if (ci===2) return;
-        if (ci===4&&linha===1) return;
-        var ph=document.createElement("div");
-        ph.className="ph"; el.appendChild(ph); return;
+      if (item === null) {
+        if (ci === 2) return;
+        if (ci === 4 && linha === 1) return;
+        var ph = document.createElement("div");
+        ph.className = "ph"; el.appendChild(ph); return;
       }
 
-      var btn=document.createElement("button");
-      var st=STATUS[item]||"livre";
-      btn.className="assento "+st+(item===31?" assento31":"");
-      btn.textContent=item<10?"0"+item:""+item;
-      btn.dataset.num=item;
-      if (item===31) btn.style.cssText="grid-column:3;grid-row:8;";
-      if (st==="ocupado") {
-        btn.disabled=true;
+      var btn = document.createElement("button");
+      var st  = STATUS[item] || "livre";
+      btn.className  = "assento " + st + (item === 31 ? " assento31" : "");
+      btn.textContent = item < 10 ? "0" + item : "" + item;
+      btn.dataset.num = item;
+      if (item === 31) btn.style.cssText = "grid-column:3;grid-row:8;";
+
+      if (st === "ocupado") {
+        btn.disabled = true;
       } else {
-        btn.addEventListener("click",(function(n){ return function(){ toggleAssento(n); }; })(item));
+        btn.addEventListener("click", (function(n){ return function(){ toggleAssento(n); }; })(item));
       }
       el.appendChild(btn);
     });
@@ -483,21 +488,21 @@ function renderizarMapa() {
 }
 
 /* ============================================================
-   TOGGLE
+   TOGGLE — laranja só quando o usuário clica
    ============================================================ */
 function toggleAssento(num) {
   if (STATUS[num] === "ocupado") return;
 
-  const selecionados = Object.keys(STATUS).filter(k => STATUS[k] === "selecionado");
+  var selecionados = Object.keys(STATUS).filter(function(k){ return STATUS[k] === "selecionado"; });
 
   if (STATUS[num] === "livre" && selecionados.length >= MAX_ASSENTOS) {
-    alert(`Você pode selecionar no máximo ${MAX_ASSENTOS} assento(s).`);
+    alert("Você pode selecionar no máximo " + MAX_ASSENTOS + " assento(s).");
     return;
   }
 
   STATUS[num] = STATUS[num] === "livre" ? "selecionado" : "livre";
 
-  var btn = document.querySelector(".assento[data-num='"+num+"']");
+  var btn = document.querySelector(".assento[data-num='" + num + "']");
   if (btn) {
     btn.classList.remove("livre", "selecionado", "ocupado");
     btn.classList.add(STATUS[num]);
@@ -507,12 +512,12 @@ function toggleAssento(num) {
 }
 
 function atualizarContador() {
-  var n=Object.values(STATUS).filter(function(s){ return s==="selecionado"; }).length;
-  var bar=document.getElementById("status-bar");
-  bar.className="";
-  bar.textContent=n===0
-    ?"Nenhum assento selecionado"
-    :n+" assento"+(n>1?"s":"")+" selecionado"+(n>1?"s":"");
+  var n   = Object.values(STATUS).filter(function(s){ return s === "selecionado"; }).length;
+  var bar = document.getElementById("status-bar");
+  bar.className   = "";
+  bar.textContent = n === 0
+    ? "Nenhum assento selecionado"
+    : n + " assento" + (n > 1 ? "s" : "") + " selecionado" + (n > 1 ? "s" : "");
 }
 
 /* ============================================================
@@ -523,113 +528,91 @@ async function confirmarAssentos() {
   Object.keys(STATUS).forEach(function(k) {
     if (STATUS[k] === "selecionado") sel.push(parseInt(k));
   });
+  sel.sort(function(a, b){ return a - b; });
 
-  sel.sort(function(a, b) { return a - b; });
-
-  var icon = document.getElementById("modal-icon");
+  var icon   = document.getElementById("modal-icon");
   var titulo = document.getElementById("modal-titulo");
-  var corpo = document.getElementById("modal-corpo");
+  var corpo  = document.getElementById("modal-corpo");
 
   if (!sel.length) {
-    icon.textContent = "⚠️";
+    icon.textContent   = "⚠️";
     titulo.textContent = "Nenhum assento selecionado";
-    corpo.innerHTML = "Selecione ao menos um assento antes de confirmar.";
-    abrirModal();
-    return;
+    corpo.innerHTML    = "Selecione ao menos um assento antes de confirmar.";
+    abrirModal(); return;
   }
 
   if (!TOKEN || !CALLBACK_URL) {
-    icon.textContent = "❌";
+    icon.textContent   = "❌";
     titulo.textContent = "Link inválido";
-    corpo.innerHTML = "Esse link não contém as informações necessárias. Abra novamente pelo WhatsApp.";
-    abrirModal();
-    return;
+    corpo.innerHTML    = "Esse link não contém as informações necessárias. Abra novamente pelo WhatsApp.";
+    abrirModal(); return;
   }
 
   try {
     setLoading(true);
 
-    const resp = await fetch(CALLBACK_URL, {
+    var resp = await fetch(CALLBACK_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        token: TOKEN,
-        assentos: sel
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: TOKEN, assentos: sel })
     });
 
-    const data = await resp.json();
-
+    var data = await resp.json();
     setLoading(false);
 
     if (!resp.ok || !data.ok) {
-      icon.textContent = "❌";
+      icon.textContent   = "❌";
       titulo.textContent = "Não foi possível confirmar";
-      corpo.innerHTML = data.message || "Ocorreu um erro ao enviar os assentos.";
-      abrirModal();
-      return;
+      corpo.innerHTML    = data.message || "Ocorreu um erro ao enviar os assentos.";
+      abrirModal(); return;
     }
 
-    var lista = sel.map(function(n) {
-      return n < 10 ? "0" + n : "" + n;
-    }).join(", ");
-
-    icon.textContent = "✅";
+    var lista = sel.map(function(n){ return n < 10 ? "0" + n : "" + n; }).join(", ");
+    icon.textContent   = "✅";
     titulo.textContent = "Assentos confirmados!";
-    corpo.innerHTML = "<strong>Assentos selecionados:</strong><br>" + lista + "<br><br>" + (data.message || "Sua seleção foi enviada com sucesso.");
+    corpo.innerHTML    = "<strong>Assentos selecionados:</strong><br>" + lista
+                       + "<br><br>" + (data.message || "Sua seleção foi enviada com sucesso.");
     abrirModal();
 
-  } catch (err) {
+  } catch(err) {
     console.error(err);
     setLoading(false);
-
-    icon.textContent = "❌";
+    icon.textContent   = "❌";
     titulo.textContent = "Erro de conexão";
-    corpo.innerHTML = "Não foi possível enviar sua seleção. Tente novamente.";
+    corpo.innerHTML    = "Não foi possível enviar sua seleção. Tente novamente.";
     abrirModal();
   }
 }
 
-function abrirModal() {
-  document.getElementById("modal").classList.add("aberto");
-}
-
-function fecharModal() {
-  document.getElementById("modal").classList.remove("aberto");
-}
-
-function fecharModalFora(e) {
-  if (e.target.id === "modal") fecharModal();
-}
+function abrirModal()      { document.getElementById("modal").classList.add("aberto"); }
+function fecharModal()     { document.getElementById("modal").classList.remove("aberto"); }
+function fecharModalFora(e){ if (e.target.id === "modal") fecharModal(); }
 
 /* ============================================================
    LOADING
    ============================================================ */
-function setLoading(v) { document.getElementById("loading").classList.toggle("ativo",v); }
+function setLoading(v) { document.getElementById("loading").classList.toggle("ativo", v); }
 
 /* ============================================================
    INIT
    ============================================================ */
 async function inicializar() {
   setLoading(true);
-  var bar=document.getElementById("status-bar");
+  var bar = document.getElementById("status-bar");
 
-  // Calcula dimensões ANTES de renderizar
   calcularDimensoes();
 
   try {
-    var linhas=await carregarPlanilha(ABA_PADRAO);
-    STATUS=processarDados(linhas,DATA_VIAGEM);
-    var ocup=Object.values(STATUS).filter(function(s){ return s==="ocupado"; }).length;
-    bar.className="ok";
-    bar.textContent="Dados carregados · "+ocup+" assento"+(ocup!==1?"s":"")+" ocupado"+(ocup!==1?"s":"");
+    var linhas = await carregarPlanilha(ABA_PADRAO);
+    STATUS = processarDados(linhas, DATA_VIAGEM);
+    var ocup = Object.values(STATUS).filter(function(s){ return s === "ocupado"; }).length;
+    bar.className   = "ok";
+    bar.textContent = "Dados carregados · " + ocup + " assento" + (ocup !== 1 ? "s" : "") + " ocupado" + (ocup !== 1 ? "s" : "");
   } catch(err) {
     console.error(err);
-    for(var i=1;i<=31;i++) STATUS[i]="livre";
-    bar.className="erro";
-    bar.textContent="Planilha indisponível — exibindo todos como livres.";
+    for (var i = 1; i <= 31; i++) STATUS[i] = "livre";
+    bar.className   = "erro";
+    bar.textContent = "Planilha indisponível — exibindo todos como livres.";
   }
 
   renderizarMapa();
@@ -637,11 +620,7 @@ async function inicializar() {
   setLoading(false);
 }
 
-// Recalcula ao girar o celular
-window.addEventListener("resize", function(){
-  calcularDimensoes();
-});
-
+window.addEventListener("resize", function(){ calcularDimensoes(); });
 document.addEventListener("DOMContentLoaded", inicializar);
 </script>
 </body>
